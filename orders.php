@@ -1,0 +1,121 @@
+<?php
+require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/helpers.php';
+require_once __DIR__ . '/layout.php';
+
+$staff = require_staff();
+$pdo   = get_pdo();
+
+// Fetch recent orders with staff name
+$orders = $pdo->query(
+    "SELECT o.*, s.Username AS StaffName, c.Name AS CustomerName
+     FROM `order` o
+     JOIN staff s ON s.Staff_id = o.Staff_id
+     LEFT JOIN customer c ON c.Customer_id = o.Customer_id
+     ORDER BY o.CreatedAt DESC
+     LIMIT 50"
+)->fetchAll();
+
+layout_head('Orders');
+?>
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2>Orders</h2>
+    <a href="new_order.php" class="btn btn-success">+ New Order</a>
+</div>
+
+<table class="table table-striped table-hover align-middle">
+    <thead class="table-dark">
+        <tr>
+            <th>#</th>
+            <th>Time</th>
+            <th>Staff</th>
+            <th>Customer</th>
+            <th>Total</th>
+            <th>Status</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+    <?php foreach ($orders as $o): ?>
+    <?php
+        $status_badge = match($o['Status']) {
+            'open'   => 'warning',
+            'served' => 'info',
+            'paid'   => 'success',
+            default  => 'secondary',
+        };
+    ?>
+    <tr>
+        <td><?= (int)$o['Order_id'] ?></td>
+        <td><?= e($o['CreatedAt']) ?></td>
+        <td><?= e($o['StaffName']) ?></td>
+        <td><?= $o['CustomerName'] ? e($o['CustomerName']) : '<span class="text-muted">walk-in</span>' ?></td>
+        <td>$<?= number_format((float)$o['Total'], 2) ?></td>
+        <td><span class="badge bg-<?= $status_badge ?>"><?= e($o['Status']) ?></span></td>
+        <td>
+            <a href="orders.php?view=<?= (int)$o['Order_id'] ?>" class="btn btn-sm btn-outline-secondary">View</a>
+            <?php if ($o['Status'] === 'open'): ?>
+            <a href="orders.php?mark_served=<?= (int)$o['Order_id'] ?>"
+               class="btn btn-sm btn-outline-info">Mark served</a>
+            <?php elseif ($o['Status'] === 'served'): ?>
+            <a href="orders.php?mark_paid=<?= (int)$o['Order_id'] ?>"
+               class="btn btn-sm btn-outline-success">Mark paid</a>
+            <?php endif; ?>
+        </td>
+    </tr>
+    <?php endforeach; ?>
+    <?php if (empty($orders)): ?>
+    <tr><td colspan="7" class="text-center text-muted">No orders yet.</td></tr>
+    <?php endif; ?>
+    </tbody>
+</table>
+
+<?php
+// Detail view
+if (isset($_GET['view'])) {
+    $oid   = (int)$_GET['view'];
+    $order = $pdo->query(
+        "SELECT o.*, s.Username AS StaffName, c.Name AS CustomerName
+         FROM `order` o
+         JOIN staff s ON s.Staff_id = o.Staff_id
+         LEFT JOIN customer c ON c.Customer_id = o.Customer_id
+         WHERE o.Order_id = $oid"
+    )->fetch();
+
+    if ($order) {
+        $lines = $pdo->query(
+            "SELECT ol.*, m.Name AS ItemName
+             FROM order_line ol
+             JOIN menu_item m ON m.Item_id = ol.Item_id
+             WHERE ol.Order_id = $oid"
+        )->fetchAll();
+        ?>
+        <hr>
+        <h5>Order #<?= (int)$order['Order_id'] ?> Detail</h5>
+        <p>
+            <strong>Staff:</strong> <?= e($order['StaffName']) ?> &nbsp;
+            <strong>Customer:</strong> <?= $order['CustomerName'] ? e($order['CustomerName']) : 'walk-in' ?> &nbsp;
+            <strong>Status:</strong> <?= e($order['Status']) ?>
+        </p>
+        <table class="table table-sm w-auto">
+            <thead><tr><th>Item</th><th>Qty</th><th>Line Price</th></tr></thead>
+            <tbody>
+            <?php foreach ($lines as $l): ?>
+            <tr>
+                <td><?= e($l['ItemName']) ?></td>
+                <td><?= (int)$l['Qty'] ?></td>
+                <td>$<?= number_format((float)$l['LinePrice'], 2) ?></td>
+            </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+        <p>Subtotal: $<?= number_format((float)$order['Subtotal'], 2) ?>
+           &nbsp; Discount: $<?= number_format((float)$order['Discount'], 2) ?>
+           &nbsp; <strong>Total: $<?= number_format((float)$order['Total'], 2) ?></strong>
+        </p>
+        <?php
+    }
+}
+
+layout_foot();
