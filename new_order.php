@@ -148,9 +148,9 @@ layout_head('New Order');
                     </tbody>
                 </table>
 
-                <p class="fw-bold mb-1">Subtotal: $<?= number_format($subtotal, 2) ?></p>
+                <p class="mb-1">Subtotal: $<?= number_format($subtotal, 2) ?></p>
 
-                <form method="POST" action="new_order.php">
+                <form method="POST" action="new_order.php" id="orderForm">
                     <div class="mb-2">
                         <label class="form-label">Customer (optional)</label>
                         <select name="customer_id" class="form-select form-select-sm">
@@ -162,13 +162,26 @@ layout_head('New Order');
                             <?php endforeach; ?>
                         </select>
                     </div>
-                    <div class="mb-3">
+                    <div class="mb-2">
                         <label class="form-label">Discount ($)</label>
-                        <input type="number" name="discount" class="form-control form-control-sm"
-                               min="0" step="0.01" value="0">
+                        <input type="number" name="discount" id="discountInput"
+                               class="form-control form-control-sm"
+                               min="0" max="<?= number_format($subtotal, 2) ?>" step="0.01"
+                               value="0" oninput="updateTotal()">
                     </div>
+                    <p class="fw-bold" id="totalDisplay">
+                        Total: $<?= number_format($subtotal, 2) ?>
+                    </p>
                     <button type="submit" name="submit_order" class="btn btn-success w-100">Place Order</button>
                 </form>
+                <script>
+                function updateTotal() {
+                    var sub  = <?= number_format($subtotal, 4, '.', '') ?>;
+                    var disc = parseFloat(document.getElementById('discountInput').value) || 0;
+                    var total = Math.max(0, sub - disc).toFixed(2);
+                    document.getElementById('totalDisplay').textContent = 'Total: $' + total;
+                }
+                </script>
                 <a href="new_order.php?clear=1" class="btn btn-sm btn-outline-secondary mt-2">Clear cart</a>
                 <?php endif; ?>
             </div>
