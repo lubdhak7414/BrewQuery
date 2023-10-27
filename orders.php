@@ -7,6 +7,21 @@ require_once __DIR__ . '/layout.php';
 $staff = require_staff();
 $pdo   = get_pdo();
 
+// Handle status transitions (raw queries — feature era)
+if (isset($_GET['mark_served'])) {
+    $oid = (int)$_GET['mark_served'];
+    $pdo->query("UPDATE `order` SET Status = 'served' WHERE Order_id = $oid AND Status = 'open'");
+    flash('Order #' . $oid . ' marked as served.');
+    redirect('orders.php');
+}
+
+if (isset($_GET['mark_paid'])) {
+    $oid = (int)$_GET['mark_paid'];
+    $pdo->query("UPDATE `order` SET Status = 'paid' WHERE Order_id = $oid AND Status = 'served'");
+    flash('Order #' . $oid . ' marked as paid.');
+    redirect('orders.php');
+}
+
 // Fetch recent orders with staff name
 $orders = $pdo->query(
     "SELECT o.*, s.Username AS StaffName, c.Name AS CustomerName
