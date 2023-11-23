@@ -71,13 +71,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_order'])) {
                      VALUES (NOW(), 'open', $subtotal, $discount, $total, $staff_id, $cust_val)");
         $order_id = $pdo->lastInsertId();
 
-        // Insert order lines
+        // Insert order lines and decrement stock
         foreach ($cart as $entry) {
             $item_id    = (int)$entry['item_id'];
             $qty        = (int)$entry['qty'];
             $line_price = round($entry['price'] * $qty, 2);
             $pdo->query("INSERT INTO order_line (Order_id, Item_id, Qty, LinePrice)
                          VALUES ($order_id, $item_id, $qty, $line_price)");
+
+            // Decrement ingredient stock via recipe (raw query)
+            $recipes = $pdo->query(
+                "SELECT Ingredient_id, QtyNeeded FROM recipe WHERE Item_id = $item_id"
+            )->fetchAll();
+            foreach ($recipes as $r) {
+                $ing_id    = (int)$r['Ingredient_id'];
+                $total_qty = (float)$r['QtyNeeded'] * $qty;
+                $pdo->query(
+                    "UPDATE ingredient SET StockQty = StockQty - $total_qty WHERE Ingredient_id = $ing_id"
+                );
+            }
         }
 
         $_SESSION['cart'] = [];
