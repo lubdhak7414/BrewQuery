@@ -15,12 +15,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = $_POST['username'] ?? '';
     $password = $_POST['password'] ?? '';
 
-    // authenticate staff
-    $hash   = md5($password);
-    $result = $pdo->query("SELECT * FROM staff WHERE Username = '$username' AND Password = '$hash'");
-    $staff  = $result->fetch();
+    // Use prepared statement to fetch by username only, then verify hash
+    $stmt = $pdo->prepare("SELECT * FROM staff WHERE Username = ?");
+    $stmt->execute([$username]);
+    $staff = $stmt->fetch();
 
-    if ($staff) {
+    if ($staff && password_verify($password, $staff['Password'])) {
         $_SESSION['staff_id'] = $staff['Staff_id'];
         $_SESSION['staff']    = $staff;
         redirect('index.php');
