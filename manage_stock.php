@@ -13,7 +13,9 @@ $edit  = null;
 // Load ingredient for edit
 if (isset($_GET['edit'])) {
     $id   = (int)$_GET['edit'];
-    $edit = $pdo->query("SELECT * FROM ingredient WHERE Ingredient_id = $id")->fetch();
+    $stmt = $pdo->prepare("SELECT * FROM ingredient WHERE Ingredient_id = ?");
+    $stmt->execute([$id]);
+    $edit = $stmt->fetch();
 }
 
 // Handle add / update
@@ -27,23 +29,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'Name is required.';
     } else {
         if (!empty($_POST['ingredient_id'])) {
-            $id = (int)$_POST['ingredient_id'];
-            $pdo->query("UPDATE ingredient
-                         SET Name = '$name', Unit = '$unit', StockQty = $stock, ReorderLevel = $reorder
-                         WHERE Ingredient_id = $id");
+            $id   = (int)$_POST['ingredient_id'];
+            $stmt = $pdo->prepare(
+                "UPDATE ingredient SET Name = ?, Unit = ?, StockQty = ?, ReorderLevel = ? WHERE Ingredient_id = ?"
+            );
+            $stmt->execute([$name, $unit, $stock, $reorder, $id]);
             flash('Ingredient updated.');
         } else {
-            $pdo->query("INSERT INTO ingredient (Name, Unit, StockQty, ReorderLevel)
-                         VALUES ('$name', '$unit', $stock, $reorder)");
+            $stmt = $pdo->prepare(
+                "INSERT INTO ingredient (Name, Unit, StockQty, ReorderLevel) VALUES (?, ?, ?, ?)"
+            );
+            $stmt->execute([$name, $unit, $stock, $reorder]);
             flash('Ingredient added.');
         }
         redirect('manage_stock.php');
     }
 }
 
-$ingredients = $pdo->query(
-    "SELECT * FROM ingredient ORDER BY Name"
-)->fetchAll();
+$ingredients = $pdo->query("SELECT * FROM ingredient ORDER BY Name")->fetchAll();
 
 layout_head('Stock Management');
 ?>

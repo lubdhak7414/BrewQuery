@@ -14,10 +14,10 @@ $searched = false;
 // Search by phone
 if (isset($_GET['phone'])) {
     $searched = true;
-    $phone = $_GET['phone'];
-    $found = $pdo->query(
-        "SELECT * FROM customer WHERE Phone = '$phone'"
-    )->fetch();
+    $phone    = $_GET['phone'];
+    $stmt     = $pdo->prepare("SELECT * FROM customer WHERE Phone = ?");
+    $stmt->execute([$phone]);
+    $found = $stmt->fetch();
 }
 
 // Add new customer
@@ -29,7 +29,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_customer'])) {
         $error = 'Name and phone are required.';
     } else {
         try {
-            $pdo->query("INSERT INTO customer (Name, Phone, LoyaltyPoints) VALUES ('$name', '$phone', 0)");
+            $stmt = $pdo->prepare("INSERT INTO customer (Name, Phone, LoyaltyPoints) VALUES (?, ?, 0)");
+            $stmt->execute([$name, $phone]);
             flash('Customer added successfully.');
             redirect('customer_lookup.php?phone=' . urlencode($phone));
         } catch (\PDOException $e) {
@@ -44,7 +45,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['adjust_points'])) {
     $points  = (int)$_POST['points'];
     $phone   = $_POST['current_phone'] ?? '';
 
-    $pdo->query("UPDATE customer SET LoyaltyPoints = LoyaltyPoints + $points WHERE Customer_id = $cust_id");
+    $stmt = $pdo->prepare("UPDATE customer SET LoyaltyPoints = LoyaltyPoints + ? WHERE Customer_id = ?");
+    $stmt->execute([$points, $cust_id]);
     flash('Loyalty points updated.');
     redirect('customer_lookup.php?phone=' . urlencode($phone));
 }

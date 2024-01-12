@@ -12,16 +12,18 @@ $edit   = null;
 
 // Delete item
 if (isset($_GET['delete'])) {
-    $id = (int)$_GET['delete'];
-    $pdo->query("DELETE FROM menu_item WHERE Item_id = $id");
+    $id   = (int)$_GET['delete'];
+    $stmt = $pdo->prepare("DELETE FROM menu_item WHERE Item_id = ?");
+    $stmt->execute([$id]);
     flash('Item deleted.');
     redirect('manage_menu.php');
 }
 
 // Toggle availability
 if (isset($_GET['toggle'])) {
-    $id = (int)$_GET['toggle'];
-    $pdo->query("UPDATE menu_item SET Available = 1 - Available WHERE Item_id = $id");
+    $id   = (int)$_GET['toggle'];
+    $stmt = $pdo->prepare("UPDATE menu_item SET Available = 1 - Available WHERE Item_id = ?");
+    $stmt->execute([$id]);
     flash('Availability updated.');
     redirect('manage_menu.php');
 }
@@ -29,7 +31,9 @@ if (isset($_GET['toggle'])) {
 // Load item for edit
 if (isset($_GET['edit'])) {
     $id   = (int)$_GET['edit'];
-    $edit = $pdo->query("SELECT * FROM menu_item WHERE Item_id = $id")->fetch();
+    $stmt = $pdo->prepare("SELECT * FROM menu_item WHERE Item_id = ?");
+    $stmt->execute([$id]);
+    $edit = $stmt->fetch();
 }
 
 // Handle add / update
@@ -43,16 +47,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'Name and price are required.';
     } else {
         if (!empty($_POST['item_id'])) {
-            // Update (raw query)
-            $id = (int)$_POST['item_id'];
-            $pdo->query("UPDATE menu_item
-                         SET Name = '$name', Category = '$category', Price = $price, Available = $available
-                         WHERE Item_id = $id");
+            $id   = (int)$_POST['item_id'];
+            $stmt = $pdo->prepare(
+                "UPDATE menu_item SET Name = ?, Category = ?, Price = ?, Available = ? WHERE Item_id = ?"
+            );
+            $stmt->execute([$name, $category, $price, $available, $id]);
             flash('Item updated.');
         } else {
-            // Insert (raw query)
-            $pdo->query("INSERT INTO menu_item (Name, Category, Price, Available)
-                         VALUES ('$name', '$category', $price, $available)");
+            $stmt = $pdo->prepare(
+                "INSERT INTO menu_item (Name, Category, Price, Available) VALUES (?, ?, ?, ?)"
+            );
+            $stmt->execute([$name, $category, $price, $available]);
             flash('Item added.');
         }
         redirect('manage_menu.php');

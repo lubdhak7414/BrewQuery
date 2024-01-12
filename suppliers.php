@@ -12,12 +12,15 @@ $edit  = null;
 
 if (isset($_GET['edit'])) {
     $id   = (int)$_GET['edit'];
-    $edit = $pdo->query("SELECT * FROM supplier WHERE Supplier_id = $id")->fetch();
+    $stmt = $pdo->prepare("SELECT * FROM supplier WHERE Supplier_id = ?");
+    $stmt->execute([$id]);
+    $edit = $stmt->fetch();
 }
 
 if (isset($_GET['delete'])) {
-    $id = (int)$_GET['delete'];
-    $pdo->query("DELETE FROM supplier WHERE Supplier_id = $id");
+    $id   = (int)$_GET['delete'];
+    $stmt = $pdo->prepare("DELETE FROM supplier WHERE Supplier_id = ?");
+    $stmt->execute([$id]);
     flash('Supplier deleted.');
     redirect('suppliers.php');
 }
@@ -30,11 +33,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'Supplier name is required.';
     } else {
         if (!empty($_POST['supplier_id'])) {
-            $id = (int)$_POST['supplier_id'];
-            $pdo->query("UPDATE supplier SET Name = '$name', Contact = '$contact' WHERE Supplier_id = $id");
+            $id   = (int)$_POST['supplier_id'];
+            $stmt = $pdo->prepare("UPDATE supplier SET Name = ?, Contact = ? WHERE Supplier_id = ?");
+            $stmt->execute([$name, $contact, $id]);
             flash('Supplier updated.');
         } else {
-            $pdo->query("INSERT INTO supplier (Name, Contact) VALUES ('$name', '$contact')");
+            $stmt = $pdo->prepare("INSERT INTO supplier (Name, Contact) VALUES (?, ?)");
+            $stmt->execute([$name, $contact]);
             flash('Supplier added.');
         }
         redirect('suppliers.php');

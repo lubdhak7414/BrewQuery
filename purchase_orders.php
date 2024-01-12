@@ -9,25 +9,24 @@ $pdo = get_pdo();
 
 $error = '';
 
-// Receive a PO (raw query)
+// Receive a PO
 if (isset($_GET['receive'])) {
     $po_id = (int)$_GET['receive'];
-    $po    = $pdo->query("SELECT * FROM purchase_order WHERE PO_id = $po_id")->fetch();
+    $stmt  = $pdo->prepare("SELECT * FROM purchase_order WHERE PO_id = ?");
+    $stmt->execute([$po_id]);
+    $po = $stmt->fetch();
 
     if ($po && $po['Status'] === 'open') {
-        // Update PO status
-        $pdo->query("UPDATE purchase_order SET Status = 'received' WHERE PO_id = $po_id");
+        $pdo->prepare("UPDATE purchase_order SET Status = 'received' WHERE PO_id = ?")
+            ->execute([$po_id]);
 
-        // Add stock for each line
-        $lines = $pdo->query(
-            "SELECT * FROM purchase_line WHERE PO_id = $po_id"
-        )->fetchAll();
+        $lstmt = $pdo->prepare("SELECT * FROM purchase_line WHERE PO_id = ?");
+        $lstmt->execute([$po_id]);
+        $lines = $lstmt->fetchAll();
+
+        $upd = $pdo->prepare("UPDATE ingredient SET StockQty = StockQty + ? WHERE Ingredient_id = ?");
         foreach ($lines as $line) {
-            $ing_id = (int)$line['Ingredient_id'];
-            $qty    = (float)$line['Qty'];
-            $pdo->query(
-                "UPDATE ingredient SET StockQty = StockQty + $qty WHERE Ingredient_id = $ing_id"
-            );
+            $upd->execute([(float)$line['Qty'], (int)$line['Ingredient_id']]);
         }
         flash('PO #' . $po_id . ' received and stock updated.');
     }
@@ -36,28 +35,31 @@ if (isset($_GET['receive'])) {
 
 // Create new PO
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_po'])) {
-    $supplier_id  = (int)($_POST['supplier_id'] ?? 0);
-    $ing_ids      = $_POST['ingredient_id']  ?? [];
-    $qtys         = $_POST['qty']            ?? [];
-    $unit_costs   = $_POST['unit_cost']      ?? [];
+    $supplier_id = (int)($_POST['supplier_id'] ?? 0);
+    $ing_ids     = $_POST['ingredient_id'] ?? [];
+    $qtys        = $_POST['qty']           ?? [];
+    $unit_costs  = $_POST['unit_cost']     ?? [];
 
     if (!$supplier_id) {
         $error = 'Please select a supplier.';
     } elseif (empty($ing_ids)) {
         $error = 'Add at least one line item.';
     } else {
-        // Insert PO (raw query)
-        $pdo->query("INSERT INTO purchase_order (Supplier_id, CreatedAt, Status)
-                     VALUES ($supplier_id, NOW(), 'open')");
-        $po_id = $pdo->lastInsertId();
+        $stmt = $pdo->prepare(
+            "INSERT INTO purchase_order (Supplier_id, CreatedAt, Status) VALUES (?, NOW(), 'open')"
+        );
+        $stmt->execute([$supplier_id]);
+        $po_id = (int)$pdo->lastInsertId();
 
+        $ins_line = $pdo->prepare(
+            "INSERT INTO purchase_line (PO_id, Ingredient_id, Qty, UnitCost) VALUES (?, ?, ?, ?)"
+        );
         for ($i = 0; $i < count($ing_ids); $i++) {
             $ing_id    = (int)$ing_ids[$i];
             $qty       = (float)$qtys[$i];
             $unit_cost = (float)$unit_costs[$i];
             if ($ing_id && $qty > 0) {
-                $pdo->query("INSERT INTO purchase_line (PO_id, Ingredient_id, Qty, UnitCost)
-                             VALUES ($po_id, $ing_id, $qty, $unit_cost)");
+                $ins_line->execute([$po_id, $ing_id, $qty, $unit_cost]);
             }
         }
         flash('Purchase order #' . $po_id . ' created.');
@@ -118,18 +120,22 @@ layout_head('Purchase Orders');
 <!-- PO Detail -->
 <?php if (isset($_GET['view'])): ?>
 <?php
-$view_id = (int)$_GET['view'];
-$view_po = $pdo->query(
+$view_id  = (int)$_GET['view'];
+$view_stmt = $pdo->prepare(
     "SELECT po.*, s.Name AS SupplierName
      FROM purchase_order po JOIN supplier s ON s.Supplier_id = po.Supplier_id
-     WHERE po.PO_id = $view_id"
-)->fetch();
+     WHERE po.PO_id = ?"
+);
+$view_stmt->execute([$view_id]);
+$view_po = $view_stmt->fetch();
 if ($view_po):
-    $view_lines = $pdo->query(
+    $lstmt2 = $pdo->prepare(
         "SELECT pl.*, i.Name AS IngName, i.Unit
          FROM purchase_line pl JOIN ingredient i ON i.Ingredient_id = pl.Ingredient_id
-         WHERE pl.PO_id = $view_id"
-    )->fetchAll();
+         WHERE pl.PO_id = ?"
+    );
+    $lstmt2->execute([$view_id]);
+    $view_lines = $lstmt2->fetchAll();
 ?>
 <div class="card mb-4 shadow-sm">
     <div class="card-header bg-secondary text-white">

@@ -17,7 +17,9 @@ if (!isset($_SESSION['cart'])) {
 // Add item to cart
 if (isset($_GET['add'])) {
     $add_id = (int)$_GET['add'];
-    $row    = $pdo->query("SELECT * FROM menu_item WHERE Item_id = $add_id AND Available = 1")->fetch();
+    $stmt   = $pdo->prepare("SELECT * FROM menu_item WHERE Item_id = ? AND Available = 1");
+    $stmt->execute([$add_id]);
+    $row = $stmt->fetch();
     if ($row) {
         $cart_key = 'item_' . $add_id;
         if (isset($_SESSION['cart'][$cart_key])) {
@@ -65,31 +67,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_order'])) {
         }
         $total = max(0, $subtotal - $discount);
 
-        // Insert order (raw query — feature era)
-        $cust_val = $customer_id ? $customer_id : 'NULL';
-        $pdo->query("INSERT INTO `order` (CreatedAt, Status, Subtotal, Discount, Total, Staff_id, Customer_id)
-                     VALUES (NOW(), 'open', $subtotal, $discount, $total, $staff_id, $cust_val)");
-        $order_id = $pdo->lastInsertId();
+        // Insert order
+        $stmt = $pdo->prepare(
+            "INSERT INTO `order` (CreatedAt, Status, Subtotal, Discount, Total, Staff_id, Customer_id)
+             VALUES (NOW(), 'open', ?, ?, ?, ?, ?)"
+        );
+        $stmt->execute([$subtotal, $discount, $total, $staff_id, $customer_id]);
+        $order_id = (int)$pdo->lastInsertId();
 
         // Insert order lines and decrement stock
+        $ins_line = $pdo->prepare(
+            "INSERT INTO order_line (Order_id, Item_id, Qty, LinePrice) VALUES (?, ?, ?, ?)"
+        );
+        $get_recipe = $pdo->prepare(
+            "SELECT Ingredient_id, QtyNeeded FROM recipe WHERE Item_id = ?"
+        );
+        $upd_stock = $pdo->prepare(
+            "UPDATE ingredient SET StockQty = StockQty - ? WHERE Ingredient_id = ?"
+        );
+
         foreach ($cart as $entry) {
             $item_id    = (int)$entry['item_id'];
             $qty        = (int)$entry['qty'];
             $line_price = round($entry['price'] * $qty, 2);
-            $pdo->query("INSERT INTO order_line (Order_id, Item_id, Qty, LinePrice)
-                         VALUES ($order_id, $item_id, $qty, $line_price)");
+            $ins_line->execute([$order_id, $item_id, $qty, $line_price]);
 
-            // Decrement ingredient stock via recipe (raw query)
-            $recipes = $pdo->query(
-                "SELECT Ingredient_id, QtyNeeded FROM recipe WHERE Item_id = $item_id"
-            )->fetchAll();
-            foreach ($recipes as $r) {
-                $ing_id    = (int)$r['Ingredient_id'];
+            $get_recipe->execute([$item_id]);
+            foreach ($get_recipe->fetchAll() as $r) {
                 $total_qty = (float)$r['QtyNeeded'] * $qty;
-                $pdo->query(
-                    "UPDATE ingredient SET StockQty = StockQty - $total_qty WHERE Ingredient_id = $ing_id"
-                );
+                $upd_stock->execute([$total_qty, (int)$r['Ingredient_id']]);
             }
+        }
+
+        // Award loyalty points if customer attached
+        if ($customer_id) {
+            $pts  = (int)floor($total);
+            $stmt = $pdo->prepare(
+                "UPDATE customer SET LoyaltyPoints = LoyaltyPoints + ? WHERE Customer_id = ?"
+            );
+            $stmt->execute([$pts, $customer_id]);
         }
 
         $_SESSION['cart'] = [];

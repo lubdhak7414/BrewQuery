@@ -7,36 +7,40 @@ require_once __DIR__ . '/layout.php';
 require_role('manager');
 $pdo = get_pdo();
 
-// Low-stock report
+// Low-stock report (no user input, safe)
 $low_stock = $pdo->query(
     "SELECT * FROM ingredient WHERE StockQty <= ReorderLevel ORDER BY (StockQty / ReorderLevel) ASC"
 )->fetchAll();
 
-// Daily Z-report
+// Daily Z-report — use prepared statement for date param
 $report_date = $_GET['date'] ?? date('Y-m-d');
-$z_report    = $pdo->query(
+$stmt        = $pdo->prepare(
     "SELECT
          COUNT(*) AS OrderCount,
          SUM(Subtotal) AS TotalSubtotal,
          SUM(Discount) AS TotalDiscount,
          SUM(Total) AS GrandTotal,
-         SUM(CASE WHEN Status = 'paid' THEN Total ELSE 0 END) AS PaidTotal,
+         SUM(CASE WHEN Status = 'paid'   THEN Total ELSE 0 END) AS PaidTotal,
          SUM(CASE WHEN Status = 'served' THEN Total ELSE 0 END) AS ServedTotal,
-         SUM(CASE WHEN Status = 'open' THEN Total ELSE 0 END) AS OpenTotal
+         SUM(CASE WHEN Status = 'open'   THEN Total ELSE 0 END) AS OpenTotal
      FROM `order`
-     WHERE DATE(CreatedAt) = '$report_date'"
-)->fetch();
+     WHERE DATE(CreatedAt) = ?"
+);
+$stmt->execute([$report_date]);
+$z_report = $stmt->fetch();
 
 // Top-selling items today
-$top_items = $pdo->query(
+$stmt2 = $pdo->prepare(
     "SELECT m.Name, SUM(ol.Qty) AS TotalQty, SUM(ol.LinePrice) AS TotalRevenue
      FROM order_line ol
      JOIN menu_item m ON m.Item_id = ol.Item_id
      JOIN `order` o ON o.Order_id = ol.Order_id
-     WHERE DATE(o.CreatedAt) = '$report_date'
+     WHERE DATE(o.CreatedAt) = ?
      GROUP BY ol.Item_id, m.Name
      ORDER BY TotalQty DESC"
-)->fetchAll();
+);
+$stmt2->execute([$report_date]);
+$top_items = $stmt2->fetchAll();
 
 layout_head('Reports');
 ?>
@@ -97,8 +101,10 @@ layout_head('Reports');
                     <tr><td>Orders</td><td class="fw-bold"><?= (int)($z_report['OrderCount'] ?? 0) ?></td></tr>
                     <tr><td>Subtotal</td><td>$<?= number_format((float)($z_report['TotalSubtotal'] ?? 0), 2) ?></td></tr>
                     <tr><td>Discounts</td><td class="text-danger">-$<?= number_format((float)($z_report['TotalDiscount'] ?? 0), 2) ?></td></tr>
-                    <tr class="table-success"><td><strong>Grand Total</strong></td>
-                        <td><strong>$<?= number_format((float)($z_report['GrandTotal'] ?? 0), 2) ?></strong></td></tr>
+                    <tr class="table-success">
+                        <td><strong>Grand Total</strong></td>
+                        <td><strong>$<?= number_format((float)($z_report['GrandTotal'] ?? 0), 2) ?></strong></td>
+                    </tr>
                     <tr><td>Paid</td><td class="text-success">$<?= number_format((float)($z_report['PaidTotal'] ?? 0), 2) ?></td></tr>
                     <tr><td>Served (unpaid)</td><td class="text-warning">$<?= number_format((float)($z_report['ServedTotal'] ?? 0), 2) ?></td></tr>
                     <tr><td>Still open</td><td class="text-secondary">$<?= number_format((float)($z_report['OpenTotal'] ?? 0), 2) ?></td></tr>
