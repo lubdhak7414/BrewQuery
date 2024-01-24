@@ -67,50 +67,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_order'])) {
         }
         $total = max(0, $subtotal - $discount);
 
-        // Insert order
-        $stmt = $pdo->prepare(
-            "INSERT INTO `order` (CreatedAt, Status, Subtotal, Discount, Total, Staff_id, Customer_id)
-             VALUES (NOW(), 'open', ?, ?, ?, ?, ?)"
-        );
-        $stmt->execute([$subtotal, $discount, $total, $staff_id, $customer_id]);
-        $order_id = (int)$pdo->lastInsertId();
+        try {
+            $pdo->beginTransaction();
 
-        // Insert order lines and decrement stock
-        $ins_line = $pdo->prepare(
-            "INSERT INTO order_line (Order_id, Item_id, Qty, LinePrice) VALUES (?, ?, ?, ?)"
-        );
-        $get_recipe = $pdo->prepare(
-            "SELECT Ingredient_id, QtyNeeded FROM recipe WHERE Item_id = ?"
-        );
-        $upd_stock = $pdo->prepare(
-            "UPDATE ingredient SET StockQty = StockQty - ? WHERE Ingredient_id = ?"
-        );
-
-        foreach ($cart as $entry) {
-            $item_id    = (int)$entry['item_id'];
-            $qty        = (int)$entry['qty'];
-            $line_price = round($entry['price'] * $qty, 2);
-            $ins_line->execute([$order_id, $item_id, $qty, $line_price]);
-
-            $get_recipe->execute([$item_id]);
-            foreach ($get_recipe->fetchAll() as $r) {
-                $total_qty = (float)$r['QtyNeeded'] * $qty;
-                $upd_stock->execute([$total_qty, (int)$r['Ingredient_id']]);
-            }
-        }
-
-        // Award loyalty points if customer attached
-        if ($customer_id) {
-            $pts  = (int)floor($total);
+            // Insert order
             $stmt = $pdo->prepare(
-                "UPDATE customer SET LoyaltyPoints = LoyaltyPoints + ? WHERE Customer_id = ?"
+                "INSERT INTO `order` (CreatedAt, Status, Subtotal, Discount, Total, Staff_id, Customer_id)
+                 VALUES (NOW(), 'open', ?, ?, ?, ?, ?)"
             );
-            $stmt->execute([$pts, $customer_id]);
-        }
+            $stmt->execute([$subtotal, $discount, $total, $staff_id, $customer_id]);
+            $order_id = (int)$pdo->lastInsertId();
 
-        $_SESSION['cart'] = [];
-        flash('Order #' . $order_id . ' placed successfully.');
-        redirect('orders.php');
+            // Insert order lines and decrement stock
+            $ins_line = $pdo->prepare(
+                "INSERT INTO order_line (Order_id, Item_id, Qty, LinePrice) VALUES (?, ?, ?, ?)"
+            );
+            $get_recipe = $pdo->prepare(
+                "SELECT Ingredient_id, QtyNeeded FROM recipe WHERE Item_id = ?"
+            );
+            $upd_stock = $pdo->prepare(
+                "UPDATE ingredient SET StockQty = StockQty - ? WHERE Ingredient_id = ?"
+            );
+
+            foreach ($cart as $entry) {
+                $item_id    = (int)$entry['item_id'];
+                $qty        = (int)$entry['qty'];
+                $line_price = round($entry['price'] * $qty, 2);
+                $ins_line->execute([$order_id, $item_id, $qty, $line_price]);
+
+                $get_recipe->execute([$item_id]);
+                foreach ($get_recipe->fetchAll() as $r) {
+                    $total_qty = (float)$r['QtyNeeded'] * $qty;
+                    $upd_stock->execute([$total_qty, (int)$r['Ingredient_id']]);
+                }
+            }
+
+            // Award loyalty points if customer attached
+            if ($customer_id) {
+                $pts  = (int)floor($total);
+                $stmt = $pdo->prepare(
+                    "UPDATE customer SET LoyaltyPoints = LoyaltyPoints + ? WHERE Customer_id = ?"
+                );
+                $stmt->execute([$pts, $customer_id]);
+            }
+
+            $pdo->commit();
+            $_SESSION['cart'] = [];
+            flash('Order #' . $order_id . ' placed successfully.');
+            redirect('orders.php');
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            $error = 'Order failed: ' . $e->getMessage();
+        }
     }
 }
 

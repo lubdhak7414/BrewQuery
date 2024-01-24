@@ -17,18 +17,27 @@ if (isset($_GET['receive'])) {
     $po = $stmt->fetch();
 
     if ($po && $po['Status'] === 'open') {
-        $pdo->prepare("UPDATE purchase_order SET Status = 'received' WHERE PO_id = ?")
-            ->execute([$po_id]);
+        try {
+            $pdo->beginTransaction();
 
-        $lstmt = $pdo->prepare("SELECT * FROM purchase_line WHERE PO_id = ?");
-        $lstmt->execute([$po_id]);
-        $lines = $lstmt->fetchAll();
+            $pdo->prepare("UPDATE purchase_order SET Status = 'received' WHERE PO_id = ?")
+                ->execute([$po_id]);
 
-        $upd = $pdo->prepare("UPDATE ingredient SET StockQty = StockQty + ? WHERE Ingredient_id = ?");
-        foreach ($lines as $line) {
-            $upd->execute([(float)$line['Qty'], (int)$line['Ingredient_id']]);
+            $lstmt = $pdo->prepare("SELECT * FROM purchase_line WHERE PO_id = ?");
+            $lstmt->execute([$po_id]);
+            $lines = $lstmt->fetchAll();
+
+            $upd = $pdo->prepare("UPDATE ingredient SET StockQty = StockQty + ? WHERE Ingredient_id = ?");
+            foreach ($lines as $line) {
+                $upd->execute([(float)$line['Qty'], (int)$line['Ingredient_id']]);
+            }
+
+            $pdo->commit();
+            flash('PO #' . $po_id . ' received and stock updated.');
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            flash('Error receiving PO: ' . $e->getMessage(), 'danger');
         }
-        flash('PO #' . $po_id . ' received and stock updated.');
     }
     redirect('purchase_orders.php');
 }
@@ -45,25 +54,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_po'])) {
     } elseif (empty($ing_ids)) {
         $error = 'Add at least one line item.';
     } else {
-        $stmt = $pdo->prepare(
-            "INSERT INTO purchase_order (Supplier_id, CreatedAt, Status) VALUES (?, NOW(), 'open')"
-        );
-        $stmt->execute([$supplier_id]);
-        $po_id = (int)$pdo->lastInsertId();
+        try {
+            $pdo->beginTransaction();
 
-        $ins_line = $pdo->prepare(
-            "INSERT INTO purchase_line (PO_id, Ingredient_id, Qty, UnitCost) VALUES (?, ?, ?, ?)"
-        );
-        for ($i = 0; $i < count($ing_ids); $i++) {
-            $ing_id    = (int)$ing_ids[$i];
-            $qty       = (float)$qtys[$i];
-            $unit_cost = (float)$unit_costs[$i];
-            if ($ing_id && $qty > 0) {
-                $ins_line->execute([$po_id, $ing_id, $qty, $unit_cost]);
+            $stmt = $pdo->prepare(
+                "INSERT INTO purchase_order (Supplier_id, CreatedAt, Status) VALUES (?, NOW(), 'open')"
+            );
+            $stmt->execute([$supplier_id]);
+            $po_id = (int)$pdo->lastInsertId();
+
+            $ins_line = $pdo->prepare(
+                "INSERT INTO purchase_line (PO_id, Ingredient_id, Qty, UnitCost) VALUES (?, ?, ?, ?)"
+            );
+            for ($i = 0; $i < count($ing_ids); $i++) {
+                $ing_id    = (int)$ing_ids[$i];
+                $qty       = (float)$qtys[$i];
+                $unit_cost = (float)$unit_costs[$i];
+                if ($ing_id && $qty > 0) {
+                    $ins_line->execute([$po_id, $ing_id, $qty, $unit_cost]);
+                }
             }
+
+            $pdo->commit();
+            flash('Purchase order #' . $po_id . ' created.');
+            redirect('purchase_orders.php');
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            $error = 'Failed to create PO: ' . $e->getMessage();
         }
-        flash('Purchase order #' . $po_id . ' created.');
-        redirect('purchase_orders.php');
     }
 }
 
