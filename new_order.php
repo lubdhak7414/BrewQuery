@@ -65,7 +65,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_order'])) {
         foreach ($cart as $entry) {
             $subtotal += $entry['price'] * $entry['qty'];
         }
-        $total = max(0, $subtotal - $discount);
+        // Clamp discount so it cannot exceed the order subtotal
+        $discount = min($discount, $subtotal);
+        $total    = round($subtotal - $discount, 2);
 
         try {
             $pdo->beginTransaction();
