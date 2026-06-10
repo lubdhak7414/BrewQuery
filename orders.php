@@ -24,21 +24,32 @@ if (isset($_GET['mark_paid'])) {
     redirect('orders.php');
 }
 
-// Fetch recent orders with staff name
+// Optional filter: today's orders only
+$today_only = isset($_GET['today']) && $_GET['today'] === '1';
+$date_clause = $today_only ? "AND DATE(o.CreatedAt) = CURDATE()" : "";
+
 $orders = $pdo->query(
     "SELECT o.*, s.Username AS StaffName, c.Name AS CustomerName
      FROM `order` o
      JOIN staff s ON s.Staff_id = o.Staff_id
      LEFT JOIN customer c ON c.Customer_id = o.Customer_id
+     WHERE 1=1 $date_clause
      ORDER BY o.CreatedAt DESC
-     LIMIT 50"
+     LIMIT 100"
 )->fetchAll();
 
 layout_head('Orders');
 ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <h2>Orders</h2>
-    <a href="new_order.php" class="btn btn-success">+ New Order</a>
+    <h2>Orders <?php if ($today_only): ?><small class="text-muted fs-6">— today</small><?php endif; ?></h2>
+    <div class="d-flex gap-2">
+        <?php if ($today_only): ?>
+        <a href="orders.php" class="btn btn-outline-secondary btn-sm">Show all</a>
+        <?php else: ?>
+        <a href="orders.php?today=1" class="btn btn-outline-secondary btn-sm">Today only</a>
+        <?php endif; ?>
+        <a href="new_order.php" class="btn btn-success">+ New Order</a>
+    </div>
 </div>
 
 <table class="table table-striped table-hover align-middle">
