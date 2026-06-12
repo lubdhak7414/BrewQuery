@@ -48,9 +48,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $ingredients = $pdo->query("SELECT * FROM ingredient ORDER BY Name")->fetchAll();
 
+$low_count = count(array_filter($ingredients, fn($i) => (float)$i['StockQty'] <= (float)$i['ReorderLevel']));
+
 layout_head('Stock Management');
 ?>
-<h2 class="mb-3">Ingredient Stock</h2>
+<div class="d-flex align-items-center gap-3 mb-3">
+    <h2 class="mb-0">Ingredient Stock</h2>
+    <?php if ($low_count > 0): ?>
+    <span class="badge bg-warning text-dark fs-6"><?= $low_count ?> low stock</span>
+    <?php endif; ?>
+</div>
 
 <?php if ($error): ?>
 <div class="alert alert-danger"><?= e($error) ?></div>
