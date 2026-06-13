@@ -27,6 +27,7 @@ function layout_head(string $title = 'BrewQuery'): void {
                 <?php if ($staff): ?>
                 <li class="nav-item"><a class="nav-link" href="new_order.php">New Order</a></li>
                 <li class="nav-item"><a class="nav-link" href="orders.php">Orders</a></li>
+                <li class="nav-item"><a class="nav-link" href="tables.php">Tables</a></li>
                 <li class="nav-item"><a class="nav-link" href="customer_lookup.php">Customers</a></li>
                 <?php endif; ?>
                 <?php if ($role === 'manager'): ?>
@@ -34,6 +35,8 @@ function layout_head(string $title = 'BrewQuery'): void {
                 <li class="nav-item"><a class="nav-link" href="manage_stock.php">Stock</a></li>
                 <li class="nav-item"><a class="nav-link" href="suppliers.php">Suppliers</a></li>
                 <li class="nav-item"><a class="nav-link" href="purchase_orders.php">Purchase Orders</a></li>
+                <li class="nav-item"><a class="nav-link" href="log_waste.php">Waste Log</a></li>
+                <li class="nav-item"><a class="nav-link" href="manage_promos.php">Promos</a></li>
                 <li class="nav-item"><a class="nav-link" href="reports.php">Reports</a></li>
                 <?php endif; ?>
             </ul>

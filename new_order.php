@@ -33,14 +33,23 @@ if (isset($_GET['add'])) {
             ];
         }
     }
-    redirect('new_order.php');
+    // Preserve table_id in redirect if set
+    $redir = 'new_order.php';
+    if (!empty($_GET['table_id'])) {
+        $redir .= '?table_id=' . (int)$_GET['table_id'];
+    }
+    redirect($redir);
 }
 
 // Remove item from cart
 if (isset($_GET['remove'])) {
     $rem_id = (int)$_GET['remove'];
     unset($_SESSION['cart']['item_' . $rem_id]);
-    redirect('new_order.php');
+    $redir = 'new_order.php';
+    if (!empty($_GET['table_id'])) {
+        $redir .= '?table_id=' . (int)$_GET['table_id'];
+    }
+    redirect($redir);
 }
 
 // Clear cart
@@ -51,75 +60,135 @@ if (isset($_GET['clear'])) {
 
 $error = '';
 
+// Pre-select table from query string (e.g. coming from tables.php)
+$preselect_table = !empty($_GET['table_id']) ? (int)$_GET['table_id'] : 0;
+
+// Validate promo code (AJAX-style via POST action=apply_promo or on submit)
+$promo_result  = null;  // ['promo' => row, 'discount' => amount, 'msg' => string]
+$applied_promo = '';
+
 // Submit order
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_order'])) {
     $cart = $_SESSION['cart'];
     if (empty($cart)) {
         $error = 'Cart is empty.';
     } else {
-        $discount    = max(0, (float)($_POST['discount'] ?? 0));
-        $customer_id = !empty($_POST['customer_id']) ? (int)$_POST['customer_id'] : null;
-        $staff_id    = (int)$_SESSION['staff_id'];
+        $customer_id  = !empty($_POST['customer_id']) ? (int)$_POST['customer_id'] : null;
+        $staff_id     = (int)$_SESSION['staff_id'];
+        $table_id_raw = !empty($_POST['table_id']) ? (int)$_POST['table_id'] : null;
+        $promo_code   = trim($_POST['promo_code'] ?? '');
 
         $subtotal = 0.0;
         foreach ($cart as $entry) {
             $subtotal += $entry['price'] * $entry['qty'];
         }
-        // Clamp discount so it cannot exceed the order subtotal
-        $discount = min($discount, $subtotal);
-        $total    = round($subtotal - $discount, 2);
 
-        try {
-            $pdo->beginTransaction();
-
-            // Insert order
-            $stmt = $pdo->prepare(
-                "INSERT INTO `order` (CreatedAt, Status, Subtotal, Discount, Total, Staff_id, Customer_id)
-                 VALUES (NOW(), 'open', ?, ?, ?, ?, ?)"
+        // Validate and compute promo discount
+        $promo_discount = 0.0;
+        $promo_row      = null;
+        if ($promo_code !== '') {
+            $pstmt = $pdo->prepare(
+                "SELECT * FROM promo WHERE Code = ? AND Active = 1"
             );
-            $stmt->execute([$subtotal, $discount, $total, $staff_id, $customer_id]);
-            $order_id = (int)$pdo->lastInsertId();
+            $pstmt->execute([$promo_code]);
+            $prow = $pstmt->fetch();
 
-            // Insert order lines and decrement stock
-            $ins_line = $pdo->prepare(
-                "INSERT INTO order_line (Order_id, Item_id, Qty, LinePrice) VALUES (?, ?, ?, ?)"
-            );
-            $get_recipe = $pdo->prepare(
-                "SELECT Ingredient_id, QtyNeeded FROM recipe WHERE Item_id = ?"
-            );
-            $upd_stock = $pdo->prepare(
-                "UPDATE ingredient SET StockQty = StockQty - ? WHERE Ingredient_id = ?"
-            );
-
-            foreach ($cart as $entry) {
-                $item_id    = (int)$entry['item_id'];
-                $qty        = (int)$entry['qty'];
-                $line_price = round($entry['price'] * $qty, 2);
-                $ins_line->execute([$order_id, $item_id, $qty, $line_price]);
-
-                $get_recipe->execute([$item_id]);
-                foreach ($get_recipe->fetchAll() as $r) {
-                    $total_qty = (float)$r['QtyNeeded'] * $qty;
-                    $upd_stock->execute([$total_qty, (int)$r['Ingredient_id']]);
+            if (!$prow) {
+                $error = 'Promo code "' . htmlspecialchars($promo_code, ENT_QUOTES) . '" is invalid or inactive.';
+            } elseif ($prow['ExpiresAt'] !== null && $prow['ExpiresAt'] < date('Y-m-d')) {
+                $error = 'Promo code has expired.';
+            } elseif ($prow['UsageLimit'] !== null && (int)$prow['TimesUsed'] >= (int)$prow['UsageLimit']) {
+                $error = 'Promo code usage limit reached.';
+            } elseif ($subtotal < (float)$prow['MinOrderAmount']) {
+                $error = 'Order subtotal must be at least $' . number_format((float)$prow['MinOrderAmount'], 2) . ' to use this code.';
+            } else {
+                $promo_row = $prow;
+                if ($prow['Type'] === 'percent') {
+                    $promo_discount = round($subtotal * (float)$prow['Value'] / 100, 2);
+                } else {
+                    $promo_discount = min((float)$prow['Value'], $subtotal);
                 }
             }
+        }
 
-            // Award loyalty points if customer attached
-            if ($customer_id) {
-                $pts  = (int)floor($total);
+        if ($error === '') {
+            // Clamp total discount
+            $total_discount = min($promo_discount, $subtotal);
+            $total          = round($subtotal - $total_discount, 2);
+
+            try {
+                $pdo->beginTransaction();
+
+                // Insert order
                 $stmt = $pdo->prepare(
-                    "UPDATE customer SET LoyaltyPoints = LoyaltyPoints + ? WHERE Customer_id = ?"
+                    "INSERT INTO `order` (CreatedAt, Status, Subtotal, Discount, Total, Staff_id, Customer_id, Table_id)
+                     VALUES (NOW(), 'open', ?, ?, ?, ?, ?, ?)"
                 );
-                $stmt->execute([$pts, $customer_id]);
-            }
+                $stmt->execute([$subtotal, $total_discount, $total, $staff_id, $customer_id, $table_id_raw]);
+                $order_id = (int)$pdo->lastInsertId();
 
-            $pdo->commit();
-            $_SESSION['cart'] = [];
-            flash('Order #' . $order_id . ' placed successfully.');
-            redirect('orders.php');
-        } catch (\Throwable $e) {
-            $pdo->rollBack();
-            $error = 'Order failed: ' . $e->getMessage();
+                // Insert order lines and decrement stock
+                $ins_line = $pdo->prepare(
+                    "INSERT INTO order_line (Order_id, Item_id, Qty, LinePrice) VALUES (?, ?, ?, ?)"
+                );
+                $get_recipe = $pdo->prepare(
+                    "SELECT Ingredient_id, QtyNeeded FROM recipe WHERE Item_id = ?"
+                );
+                $upd_stock = $pdo->prepare(
+                    "UPDATE ingredient SET StockQty = GREATEST(0, StockQty - ?) WHERE Ingredient_id = ?"
+                );
+
+                foreach ($cart as $entry) {
+                    $item_id    = (int)$entry['item_id'];
+                    $qty        = (int)$entry['qty'];
+                    $line_price = round($entry['price'] * $qty, 2);
+                    $ins_line->execute([$order_id, $item_id, $qty, $line_price]);
+
+                    $get_recipe->execute([$item_id]);
+                    foreach ($get_recipe->fetchAll() as $r) {
+                        $total_qty = (float)$r['QtyNeeded'] * $qty;
+                        $upd_stock->execute([$total_qty, (int)$r['Ingredient_id']]);
+                    }
+                }
+
+                // Award loyalty points if customer attached
+                if ($customer_id) {
+                    $pts  = (int)floor($total);
+                    $pstmt2 = $pdo->prepare(
+                        "UPDATE customer SET LoyaltyPoints = LoyaltyPoints + ? WHERE Customer_id = ?"
+                    );
+                    $pstmt2->execute([$pts, $customer_id]);
+                }
+
+                // Mark table as occupied if one was selected
+                if ($table_id_raw) {
+                    $upd_tbl = $pdo->prepare(
+                        "UPDATE cafe_table SET Status = 'occupied' WHERE Table_id = ?"
+                    );
+                    $upd_tbl->execute([$table_id_raw]);
+                }
+
+                // Record promo usage
+                if ($promo_row) {
+                    $ins_pu = $pdo->prepare(
+                        "INSERT INTO promo_usage (Promo_id, Order_id, UsedAt) VALUES (?, ?, NOW())"
+                    );
+                    $ins_pu->execute([(int)$promo_row['Promo_id'], $order_id]);
+
+                    $upd_promo = $pdo->prepare(
+                        "UPDATE promo SET TimesUsed = TimesUsed + 1 WHERE Promo_id = ?"
+                    );
+                    $upd_promo->execute([(int)$promo_row['Promo_id']]);
+                }
+
+                $pdo->commit();
+                $_SESSION['cart'] = [];
+                flash('Order #' . $order_id . ' placed successfully.');
+                redirect('orders.php');
+            } catch (\Throwable $e) {
+                $pdo->rollBack();
+                $error = 'Order failed: ' . $e->getMessage();
+            }
         }
     }
 }
@@ -132,6 +201,11 @@ foreach ($cart as $entry) {
 
 // Fetch customers for dropdown
 $customers = $pdo->query("SELECT * FROM customer ORDER BY Name")->fetchAll();
+
+// Fetch tables for dropdown (free + occupied)
+$cafe_tables = $pdo->query(
+    "SELECT * FROM cafe_table ORDER BY TableNumber"
+)->fetchAll();
 
 layout_head('New Order');
 ?>
@@ -152,7 +226,7 @@ layout_head('New Order');
         <h6 class="mt-3 text-muted"><?= e($cat) ?></h6>
         <div class="list-group mb-2">
             <?php foreach ($cat_items as $item): ?>
-            <a href="new_order.php?add=<?= (int)$item['Item_id'] ?>"
+            <a href="new_order.php?add=<?= (int)$item['Item_id'] ?><?= $preselect_table ? '&amp;table_id=' . $preselect_table : '' ?>"
                class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
                 <?= e($item['Name']) ?>
                 <span class="badge bg-secondary">$<?= number_format((float)$item['Price'], 2) ?></span>
@@ -178,17 +252,32 @@ layout_head('New Order');
                         <td><?= (int)$entry['qty'] ?></td>
                         <td>$<?= number_format($entry['price'] * $entry['qty'], 2) ?></td>
                         <td>
-                            <a href="new_order.php?remove=<?= (int)$entry['item_id'] ?>"
-                               class="btn btn-sm btn-outline-danger">×</a>
+                            <a href="new_order.php?remove=<?= (int)$entry['item_id'] ?><?= $preselect_table ? '&amp;table_id=' . $preselect_table : '' ?>"
+                               class="btn btn-sm btn-outline-danger">&#215;</a>
                         </td>
                     </tr>
                     <?php endforeach; ?>
                     </tbody>
                 </table>
 
-                <p class="mb-1">Subtotal: $<?= number_format($subtotal, 2) ?></p>
+                <p class="mb-2">Subtotal: <strong>$<?= number_format($subtotal, 2) ?></strong></p>
 
                 <form method="POST" action="new_order.php" id="orderForm">
+                    <div class="mb-2">
+                        <label class="form-label">Table (optional)</label>
+                        <select name="table_id" class="form-select form-select-sm" id="tableSelect">
+                            <option value="">— Takeaway / No table —</option>
+                            <?php foreach ($cafe_tables as $t): ?>
+                            <option value="<?= (int)$t['Table_id'] ?>"
+                                <?= ($preselect_table === (int)$t['Table_id']) ? 'selected' : '' ?>
+                                <?= $t['Status'] === 'billed' ? 'disabled' : '' ?>>
+                                Table <?= (int)$t['TableNumber'] ?>
+                                (<?= (int)$t['Seats'] ?> seats)
+                                — <?= e($t['Status']) ?>
+                            </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
                     <div class="mb-2">
                         <label class="form-label">Customer (optional)</label>
                         <select name="customer_id" class="form-select form-select-sm">
@@ -201,23 +290,108 @@ layout_head('New Order');
                         </select>
                     </div>
                     <div class="mb-2">
-                        <label class="form-label">Discount ($)</label>
-                        <input type="number" name="discount" id="discountInput"
-                               class="form-control form-control-sm"
-                               min="0" max="<?= number_format($subtotal, 2) ?>" step="0.01"
-                               value="0" oninput="updateTotal()">
+                        <label class="form-label">Promo Code (optional)</label>
+                        <div class="input-group input-group-sm">
+                            <input type="text" name="promo_code" id="promoInput"
+                                   class="form-control text-uppercase"
+                                   placeholder="e.g. WELCOME10"
+                                   value="<?= e($_POST['promo_code'] ?? '') ?>"
+                                   oninput="this.value=this.value.toUpperCase(); updatePromo()">
+                        </div>
+                        <div id="promoFeedback" class="form-text text-muted"></div>
                     </div>
                     <p class="fw-bold" id="totalDisplay">
                         Total: $<?= number_format($subtotal, 2) ?>
                     </p>
+                    <div id="discountLine" class="text-success small mb-1" style="display:none"></div>
                     <button type="submit" name="submit_order" class="btn btn-success w-100">Place Order</button>
                 </form>
                 <script>
-                function updateTotal() {
-                    var sub  = <?= number_format($subtotal, 4, '.', '') ?>;
-                    var disc = parseFloat(document.getElementById('discountInput').value) || 0;
-                    var total = Math.max(0, sub - disc).toFixed(2);
-                    document.getElementById('totalDisplay').textContent = 'Total: $' + total;
+                var subtotal = <?= number_format($subtotal, 4, '.', '') ?>;
+
+                // Promo definitions for client-side preview (not authoritative — server validates)
+                var promos = <?php
+                    $promo_js = [];
+                    $all_promos = $pdo->query(
+                        "SELECT Code, Type, Value, MinOrderAmount, UsageLimit, TimesUsed, ExpiresAt, Active FROM promo"
+                    )->fetchAll();
+                    foreach ($all_promos as $p) {
+                        $promo_js[] = [
+                            'code'     => $p['Code'],
+                            'type'     => $p['Type'],
+                            'value'    => (float)$p['Value'],
+                            'min'      => (float)$p['MinOrderAmount'],
+                            'limit'    => $p['UsageLimit'] === null ? null : (int)$p['UsageLimit'],
+                            'used'     => (int)$p['TimesUsed'],
+                            'expires'  => $p['ExpiresAt'],
+                            'active'   => (bool)$p['Active'],
+                        ];
+                    }
+                    echo json_encode($promo_js);
+                ?>;
+
+                function updatePromo() {
+                    var code = document.getElementById('promoInput').value.trim().toUpperCase();
+                    var fb   = document.getElementById('promoFeedback');
+                    var dl   = document.getElementById('discountLine');
+                    var td   = document.getElementById('totalDisplay');
+
+                    if (!code) {
+                        fb.textContent = '';
+                        fb.className   = 'form-text text-muted';
+                        dl.style.display = 'none';
+                        td.textContent = 'Total: $' + subtotal.toFixed(2);
+                        return;
+                    }
+
+                    var today = new Date().toISOString().split('T')[0];
+                    var found = null;
+                    for (var i = 0; i < promos.length; i++) {
+                        if (promos[i].code === code) { found = promos[i]; break; }
+                    }
+
+                    var disc = 0;
+                    if (!found || !found.active) {
+                        fb.textContent = 'Code not found or inactive.';
+                        fb.className   = 'form-text text-danger';
+                        dl.style.display = 'none';
+                        td.textContent = 'Total: $' + subtotal.toFixed(2);
+                        return;
+                    }
+                    if (found.expires && found.expires < today) {
+                        fb.textContent = 'Code has expired.';
+                        fb.className   = 'form-text text-danger';
+                        dl.style.display = 'none';
+                        td.textContent = 'Total: $' + subtotal.toFixed(2);
+                        return;
+                    }
+                    if (found.limit !== null && found.used >= found.limit) {
+                        fb.textContent = 'Usage limit reached.';
+                        fb.className   = 'form-text text-danger';
+                        dl.style.display = 'none';
+                        td.textContent = 'Total: $' + subtotal.toFixed(2);
+                        return;
+                    }
+                    if (subtotal < found.min) {
+                        fb.textContent = 'Min. order $' + found.min.toFixed(2) + ' required.';
+                        fb.className   = 'form-text text-warning';
+                        dl.style.display = 'none';
+                        td.textContent = 'Total: $' + subtotal.toFixed(2);
+                        return;
+                    }
+
+                    if (found.type === 'percent') {
+                        disc = Math.round(subtotal * found.value / 100 * 100) / 100;
+                    } else {
+                        disc = Math.min(found.value, subtotal);
+                    }
+
+                    var total = Math.max(0, subtotal - disc).toFixed(2);
+                    fb.textContent = 'Code applied!';
+                    fb.className   = 'form-text text-success';
+                    dl.style.display = '';
+                    dl.textContent = 'Promo discount: -$' + disc.toFixed(2);
+                    td.textContent = 'Total: $' + total;
                 }
                 </script>
                 <a href="new_order.php?clear=1" class="btn btn-sm btn-outline-secondary mt-2">Clear cart</a>
