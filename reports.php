@@ -29,7 +29,7 @@ $stmt        = $pdo->prepare(
 $stmt->execute([$report_date]);
 $z_report = $stmt->fetch();
 
-// Top-selling items today
+// Top-selling items for the selected date
 $stmt2 = $pdo->prepare(
     "SELECT m.Name, SUM(ol.Qty) AS TotalQty, SUM(ol.LinePrice) AS TotalRevenue
      FROM order_line ol
@@ -41,6 +41,16 @@ $stmt2 = $pdo->prepare(
 );
 $stmt2->execute([$report_date]);
 $top_items = $stmt2->fetchAll();
+
+// All-time best sellers (useful for menu planning)
+$all_time = $pdo->query(
+    "SELECT m.Name, SUM(ol.Qty) AS TotalQty, SUM(ol.LinePrice) AS Revenue
+     FROM order_line ol
+     JOIN menu_item m ON m.Item_id = ol.Item_id
+     GROUP BY ol.Item_id, m.Name
+     ORDER BY TotalQty DESC
+     LIMIT 10"
+)->fetchAll();
 
 layout_head('Reports');
 ?>
@@ -134,5 +144,26 @@ layout_head('Reports');
     </div>
 </div>
 <?php endif; ?>
+<?php if (!empty($all_time)): ?>
+<div class="card shadow-sm mt-4">
+    <div class="card-header bg-secondary text-white fw-bold">All-Time Best Sellers (top 10)</div>
+    <div class="card-body p-0">
+        <table class="table table-striped mb-0">
+            <thead><tr><th>#</th><th>Item</th><th>Units sold</th><th>Revenue</th></tr></thead>
+            <tbody>
+            <?php foreach ($all_time as $i => $row): ?>
+            <tr>
+                <td class="text-muted"><?= $i + 1 ?></td>
+                <td><?= e($row['Name']) ?></td>
+                <td><?= (int)$row['TotalQty'] ?></td>
+                <td>$<?= number_format((float)$row['Revenue'], 2) ?></td>
+            </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
+<?php endif; ?>
+
 <?php
 layout_foot();
