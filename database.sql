@@ -47,6 +47,13 @@ CREATE TABLE customer (
     LoyaltyPoints INT NOT NULL DEFAULT 0
 );
 
+CREATE TABLE cafe_table (
+    Table_id INT PRIMARY KEY AUTO_INCREMENT,
+    TableNumber INT NOT NULL UNIQUE,
+    Seats INT NOT NULL DEFAULT 4,
+    Status ENUM('free','occupied','billed') DEFAULT 'free'
+);
+
 CREATE TABLE `order` (
     Order_id INT PRIMARY KEY AUTO_INCREMENT,
     CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -56,8 +63,10 @@ CREATE TABLE `order` (
     Total DECIMAL(8,2) NOT NULL DEFAULT 0,
     Staff_id INT NOT NULL,
     Customer_id INT NULL,
+    Table_id INT NULL,
     FOREIGN KEY (Staff_id) REFERENCES staff(Staff_id),
-    FOREIGN KEY (Customer_id) REFERENCES customer(Customer_id) ON DELETE SET NULL
+    FOREIGN KEY (Customer_id) REFERENCES customer(Customer_id) ON DELETE SET NULL,
+    FOREIGN KEY (Table_id) REFERENCES cafe_table(Table_id) ON DELETE SET NULL
 );
 
 CREATE TABLE order_line (
@@ -94,9 +103,54 @@ CREATE TABLE purchase_line (
     FOREIGN KEY (Ingredient_id) REFERENCES ingredient(Ingredient_id)
 );
 
+CREATE TABLE waste_log (
+    Waste_id INT PRIMARY KEY AUTO_INCREMENT,
+    Ingredient_id INT NOT NULL,
+    QtyWasted DECIMAL(10,3) NOT NULL,
+    Reason VARCHAR(150) NOT NULL,
+    EstimatedCost DECIMAL(8,2) NULL,
+    LoggedBy INT NOT NULL,
+    LoggedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (Ingredient_id) REFERENCES ingredient(Ingredient_id),
+    FOREIGN KEY (LoggedBy) REFERENCES staff(Staff_id)
+);
+
+CREATE TABLE promo (
+    Promo_id INT PRIMARY KEY AUTO_INCREMENT,
+    Code VARCHAR(30) NOT NULL UNIQUE,
+    Type ENUM('percent','flat') NOT NULL,
+    Value DECIMAL(8,2) NOT NULL,
+    MinOrderAmount DECIMAL(8,2) DEFAULT 0.00,
+    UsageLimit INT NULL,
+    TimesUsed INT DEFAULT 0,
+    ExpiresAt DATE NULL,
+    Active TINYINT(1) DEFAULT 1,
+    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE promo_usage (
+    Usage_id INT PRIMARY KEY AUTO_INCREMENT,
+    Promo_id INT NOT NULL,
+    Order_id INT NOT NULL,
+    UsedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (Promo_id) REFERENCES promo(Promo_id),
+    FOREIGN KEY (Order_id) REFERENCES `order`(Order_id)
+);
+
 -- -------------------------
 -- Seed Data
 -- -------------------------
+
+-- Cafe Tables
+INSERT INTO cafe_table (TableNumber, Seats, Status) VALUES
+(1, 4, 'free'),
+(2, 4, 'free'),
+(3, 4, 'free'),
+(4, 4, 'free'),
+(5, 4, 'free'),
+(6, 4, 'free'),
+(7, 4, 'free'),
+(8, 4, 'free');
 
 -- Staff (passwords hashed with bcrypt)
 INSERT INTO staff (Username, Password, Role) VALUES
@@ -161,6 +215,12 @@ INSERT INTO order_line (Order_id, Item_id, Qty, LinePrice) VALUES
 (1, 4, 2, 4.00),
 (2, 2, 2, 8.00),
 (3, 6, 1, 5.50);
+
+-- Promo Codes
+INSERT INTO promo (Code, Type, Value, MinOrderAmount, UsageLimit, TimesUsed, ExpiresAt, Active) VALUES
+('WELCOME10', 'percent', 10.00, 0.00, 100, 0, NULL, 1),
+('FLAT2', 'flat', 2.00, 10.00, NULL, 0, NULL, 1),
+('SUMMER5', 'percent', 5.00, 0.00, NULL, 0, '2026-08-31', 1);
 
 -- Purchase Order (received)
 INSERT INTO purchase_order (Supplier_id, CreatedAt, Status) VALUES
