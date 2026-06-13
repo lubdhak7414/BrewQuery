@@ -1,50 +1,39 @@
 # BrewQuery
 
-Café order management, inventory tracking, and supplier restock system built with PHP 8.2 and MySQL. Demonstrates relational SQL across 10 tables — menu, recipes, stock, orders, purchase orders, and customer loyalty.
+Café back-office — take orders, track ingredient stock, raise purchase orders when things run low. PHP + MySQL, no framework.
 
-## Features
+The menu links to ingredients via a recipe table, so submitting an order automatically deducts stock across multiple ingredients in one transaction. Receiving a supplier PO bumps stock back up the same way.
 
-- POS-lite order builder: select menu items, apply discounts, attach a customer
-- Live orders board with status transitions (open → served → paid)
-- Ingredient stock tracking with recipe-based deductions on order submit
-- Supplier management and purchase orders (receive PO restocks ingredients)
-- Customer loyalty points awarded on each paid order
-- Low-stock alert report and daily Z-report (sales totals for today)
-- Role-based access: cashier vs manager
+## Roles
 
-## Prerequisites
+**Cashier** — builds orders, marks them served/paid, looks up customer loyalty points.  
+**Manager** — everything else: menu CRUD, stock levels, suppliers, purchase orders, reports.
 
-- PHP 8.2+
-- MySQL 8.0 / MariaDB 10.6+
-- A web server or `php -S localhost:8080`
+## Running it
 
-## Setup
+Need PHP 8.2+ and MySQL 8.0 / MariaDB.
 
 ```bash
-# 1. Create the database
 mysql -u root -p -e "CREATE DATABASE brewquery CHARACTER SET utf8mb4;"
-
-# 2. Import schema and seed data
 mysql -u root -p brewquery < database.sql
+```
 
-# 3. Edit config.php with your DB credentials (defaults: root / no password)
+Edit `config.php` (host/user/pass), then:
 
-# 4. Start
+```bash
 php -S localhost:8080
 ```
 
-Open `http://localhost:8080`.
+## Test accounts
 
-## Demo accounts
+| Username | Password | Role |
+|----------|----------|------|
+| cashier | cafe123 | Cashier |
+| manager | cafe123 | Manager |
 
-| Role | Username | Password |
-|------|----------|----------|
-| Cashier | cashier | `cafe123` |
-| Manager | manager | `cafe123` |
+## A few queries
 
-## Sample queries
-
-### Best-selling items
+Best sellers:
 ```sql
 SELECT mi.Name, SUM(ol.Qty) AS units_sold, SUM(ol.LinePrice) AS revenue
 FROM order_line ol
@@ -53,7 +42,7 @@ GROUP BY mi.Item_id
 ORDER BY units_sold DESC;
 ```
 
-### Low-stock ingredients
+What's running low:
 ```sql
 SELECT Name, Unit, StockQty, ReorderLevel
 FROM ingredient
@@ -61,31 +50,26 @@ WHERE StockQty <= ReorderLevel
 ORDER BY (StockQty / ReorderLevel);
 ```
 
-### Daily Z-report
+Today's totals (Z-report):
 ```sql
-SELECT DATE(CreatedAt) AS day,
-       COUNT(*) AS orders,
+SELECT COUNT(*) AS orders,
        SUM(Total) AS gross,
-       SUM(Discount) AS discounts,
-       SUM(Total - Discount) AS net
+       SUM(Discount) AS discounts
 FROM `order`
-WHERE DATE(CreatedAt) = CURDATE() AND Status = 'paid'
-GROUP BY day;
+WHERE DATE(CreatedAt) = CURDATE() AND Status = 'paid';
 ```
 
-### "Can we make this?" — check if stock covers a menu item
+Check if we can make a given item (Item_id = 1 here):
 ```sql
-SELECT mi.Name AS item,
-       i.Name AS ingredient,
+SELECT i.Name AS ingredient,
        r.QtyNeeded,
        i.StockQty,
-       IF(i.StockQty >= r.QtyNeeded, 'OK', 'SHORT') AS stock_status
+       IF(i.StockQty >= r.QtyNeeded, 'ok', 'short') AS status
 FROM recipe r
-JOIN menu_item mi ON mi.Item_id = r.Item_id
-JOIN ingredient i  ON i.Ingredient_id = r.Ingredient_id
-WHERE mi.Item_id = 1;
+JOIN ingredient i ON i.Ingredient_id = r.Ingredient_id
+WHERE r.Item_id = 1;
 ```
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT
