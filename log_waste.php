@@ -62,6 +62,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['log_waste'])) {
 // Fetch ingredients
 $ingredients = $pdo->query("SELECT * FROM ingredient ORDER BY Name")->fetchAll();
 
+// Fetch recent waste log (last 30 days)
+$recent = $pdo->query(
+    "SELECT wl.*, i.Name AS IngName, i.Unit, s.Username AS LoggedByName
+     FROM waste_log wl
+     JOIN ingredient i ON i.Ingredient_id = wl.Ingredient_id
+     JOIN staff s ON s.Staff_id = wl.LoggedBy
+     WHERE wl.LoggedAt >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+     ORDER BY wl.LoggedAt DESC
+     LIMIT 100"
+)->fetchAll();
+
 layout_head('Log Waste');
 ?>
 <h2 class="mb-4">Ingredient Waste Log</h2>
@@ -70,8 +81,8 @@ layout_head('Log Waste');
 <div class="alert alert-danger"><?= e($error) ?></div>
 <?php endif; ?>
 
-<div class="row justify-content-center">
-    <div class="col-md-5">
+<div class="row g-4">
+    <div class="col-md-4">
         <div class="card shadow-sm">
             <div class="card-header bg-dark text-white fw-bold">Record Waste</div>
             <div class="card-body">
@@ -104,6 +115,46 @@ layout_head('Log Waste');
                     </div>
                     <button type="submit" name="log_waste" class="btn btn-danger w-100">Log Waste</button>
                 </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-8">
+        <div class="card shadow-sm">
+            <div class="card-header bg-secondary text-white fw-bold">
+                Recent Waste (last 30 days)
+            </div>
+            <div class="card-body p-0">
+                <?php if (empty($recent)): ?>
+                <p class="p-3 mb-0 text-muted">No waste entries in the last 30 days.</p>
+                <?php else: ?>
+                <table class="table table-striped table-sm mb-0">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Date</th>
+                            <th>Ingredient</th>
+                            <th>Qty</th>
+                            <th>Unit</th>
+                            <th>Est. Cost</th>
+                            <th>Reason</th>
+                            <th>Logged By</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($recent as $w): ?>
+                    <tr>
+                        <td><?= e(substr($w['LoggedAt'], 0, 16)) ?></td>
+                        <td><?= e($w['IngName']) ?></td>
+                        <td><?= number_format((float)$w['QtyWasted'], 3) ?></td>
+                        <td><?= e($w['Unit']) ?></td>
+                        <td><?= $w['EstimatedCost'] !== null ? '$' . number_format((float)$w['EstimatedCost'], 2) : '<span class="text-muted">&#8212;</span>' ?></td>
+                        <td><?= e($w['Reason']) ?></td>
+                        <td><?= e($w['LoggedByName']) ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <?php endif; ?>
             </div>
         </div>
     </div>
