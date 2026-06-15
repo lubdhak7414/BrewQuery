@@ -52,6 +52,25 @@ $all_time = $pdo->query(
      LIMIT 10"
 )->fetchAll();
 
+// Waste summary — this month total
+$waste_month_total = $pdo->query(
+    "SELECT COALESCE(SUM(EstimatedCost), 0) AS TotalCost
+     FROM waste_log
+     WHERE YEAR(LoggedAt) = YEAR(CURDATE()) AND MONTH(LoggedAt) = MONTH(CURDATE())"
+)->fetchColumn();
+
+// Waste breakdown by ingredient this month
+$waste_breakdown = $pdo->query(
+    "SELECT i.Name, i.Unit,
+            SUM(wl.QtyWasted) AS TotalQty,
+            COALESCE(SUM(wl.EstimatedCost), 0) AS TotalCost
+     FROM waste_log wl
+     JOIN ingredient i ON i.Ingredient_id = wl.Ingredient_id
+     WHERE YEAR(wl.LoggedAt) = YEAR(CURDATE()) AND MONTH(wl.LoggedAt) = MONTH(CURDATE())
+     GROUP BY wl.Ingredient_id, i.Name, i.Unit
+     ORDER BY TotalCost DESC"
+)->fetchAll();
+
 layout_head('Reports');
 ?>
 <h2 class="mb-4">Reports</h2>
@@ -164,6 +183,46 @@ layout_head('Reports');
     </div>
 </div>
 <?php endif; ?>
+
+<!-- Waste Summary -->
+<div class="card shadow-sm mt-4 border-danger">
+    <div class="card-header bg-danger text-white fw-bold">
+        Waste Summary — <?= date('F Y') ?>
+    </div>
+    <div class="card-body">
+        <p class="mb-2">
+            Total estimated waste cost this month:
+            <strong class="text-danger">$<?= number_format((float)$waste_month_total, 2) ?></strong>
+        </p>
+        <?php if (empty($waste_breakdown)): ?>
+        <p class="text-muted mb-0">No waste recorded this month.</p>
+        <?php else: ?>
+        <table class="table table-sm table-striped mb-0">
+            <thead class="table-dark">
+                <tr>
+                    <th>Ingredient</th>
+                    <th>Total Qty Wasted</th>
+                    <th>Unit</th>
+                    <th>Est. Total Cost</th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php foreach ($waste_breakdown as $wb): ?>
+            <tr>
+                <td><?= e($wb['Name']) ?></td>
+                <td><?= number_format((float)$wb['TotalQty'], 3) ?></td>
+                <td><?= e($wb['Unit']) ?></td>
+                <td>$<?= number_format((float)$wb['TotalCost'], 2) ?></td>
+            </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+        <?php endif; ?>
+    </div>
+    <div class="card-footer text-end">
+        <a href="log_waste.php" class="btn btn-sm btn-outline-danger">Log Waste Entry</a>
+    </div>
+</div>
 
 <?php
 layout_foot();
