@@ -7,6 +7,8 @@ require_once __DIR__ . '/layout.php';
 require_role('manager');
 $pdo = get_pdo();
 
+$error = '';
+
 // Toggle active status
 if (isset($_GET['toggle']) && (int)$_GET['toggle'] > 0) {
     $pid  = (int)$_GET['toggle'];
@@ -18,87 +20,182 @@ if (isset($_GET['toggle']) && (int)$_GET['toggle'] > 0) {
     redirect('manage_promos.php');
 }
 
+// Add new promo
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_promo'])) {
+    $code      = strtoupper(trim($_POST['code'] ?? ''));
+    $type      = $_POST['type'] ?? '';
+    $value     = isset($_POST['value']) ? (float)$_POST['value'] : 0;
+    $min_order = isset($_POST['min_order']) ? (float)$_POST['min_order'] : 0;
+    $limit_raw = trim($_POST['usage_limit'] ?? '');
+    $limit     = ($limit_raw !== '') ? (int)$limit_raw : null;
+    $expires   = trim($_POST['expires_at'] ?? '');
+    $expires   = ($expires !== '') ? $expires : null;
+
+    if ($code === '') {
+        $error = 'Promo code is required.';
+    } elseif (!in_array($type, ['percent', 'flat'], true)) {
+        $error = 'Type must be percent or flat.';
+    } elseif ($value <= 0) {
+        $error = 'Value must be greater than zero.';
+    } elseif ($type === 'percent' && $value > 100) {
+        $error = 'Percent discount cannot exceed 100%.';
+    } else {
+        try {
+            $stmt = $pdo->prepare(
+                "INSERT INTO promo (Code, Type, Value, MinOrderAmount, UsageLimit, ExpiresAt, Active)
+                 VALUES (?, ?, ?, ?, ?, ?, 1)"
+            );
+            $stmt->execute([$code, $type, $value, $min_order, $limit, $expires]);
+            flash('Promo code "' . htmlspecialchars($code, ENT_QUOTES) . '" added.');
+            redirect('manage_promos.php');
+        } catch (\Throwable $e) {
+            if ($e->getCode() == 23000) {
+                $error = 'A promo with that code already exists.';
+            } else {
+                $error = 'Failed to add promo: ' . $e->getMessage();
+            }
+        }
+    }
+}
+
 $promos = $pdo->query(
     "SELECT * FROM promo ORDER BY CreatedAt DESC"
 )->fetchAll();
 
 layout_head('Manage Promos');
 ?>
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h2>Promo Codes</h2>
-</div>
+<h2 class="mb-4">Promo Code Management</h2>
 
-<div class="card shadow-sm">
-    <div class="card-header bg-dark text-white fw-bold">All Promo Codes</div>
-    <div class="card-body p-0">
-        <?php if (empty($promos)): ?>
-        <p class="p-3 mb-0 text-muted">No promo codes yet.</p>
-        <?php else: ?>
-        <table class="table table-striped table-sm mb-0 align-middle">
-            <thead class="table-dark">
-                <tr>
-                    <th>Code</th>
-                    <th>Type</th>
-                    <th>Value</th>
-                    <th>Min Order</th>
-                    <th>Used / Limit</th>
-                    <th>Expires</th>
-                    <th>Status</th>
-                    <th>Action</th>
-                </tr>
-            </thead>
-            <tbody>
-            <?php foreach ($promos as $p):
-                $today   = date('Y-m-d');
-                $expired = $p['ExpiresAt'] && $p['ExpiresAt'] < $today;
-                $maxed   = $p['UsageLimit'] !== null && (int)$p['TimesUsed'] >= (int)$p['UsageLimit'];
-            ?>
-            <tr class="<?= (!$p['Active'] || $expired || $maxed) ? 'table-secondary text-muted' : '' ?>">
-                <td class="fw-bold font-monospace"><?= e($p['Code']) ?></td>
-                <td><?= e($p['Type']) ?></td>
-                <td>
-                    <?php if ($p['Type'] === 'percent'): ?>
-                    <?= number_format((float)$p['Value'], 0) ?>%
-                    <?php else: ?>
-                    $<?= number_format((float)$p['Value'], 2) ?>
-                    <?php endif; ?>
-                </td>
-                <td>$<?= number_format((float)$p['MinOrderAmount'], 2) ?></td>
-                <td>
-                    <?= (int)$p['TimesUsed'] ?> /
-                    <?= $p['UsageLimit'] !== null ? (int)$p['UsageLimit'] : '&#8734;' ?>
-                    <?php if ($maxed): ?>
-                    <span class="badge bg-danger ms-1">maxed</span>
-                    <?php endif; ?>
-                </td>
-                <td>
-                    <?php if ($p['ExpiresAt']): ?>
-                    <?= e($p['ExpiresAt']) ?>
-                    <?php if ($expired): ?>
-                    <span class="badge bg-danger ms-1">expired</span>
-                    <?php endif; ?>
-                    <?php else: ?>
-                    <span class="text-muted">none</span>
-                    <?php endif; ?>
-                </td>
-                <td>
-                    <?php if ($p['Active']): ?>
-                    <span class="badge bg-success">Active</span>
-                    <?php else: ?>
-                    <span class="badge bg-secondary">Inactive</span>
-                    <?php endif; ?>
-                </td>
-                <td>
-                    <a href="manage_promos.php?toggle=<?= (int)$p['Promo_id'] ?>"
-                       class="btn btn-sm btn-outline-<?= $p['Active'] ? 'warning' : 'success' ?>">
-                        <?= $p['Active'] ? 'Deactivate' : 'Activate' ?>
-                    </a>
-                </td>
-            </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
-        <?php endif; ?>
+<?php if ($error): ?>
+<div class="alert alert-danger"><?= e($error) ?></div>
+<?php endif; ?>
+
+<div class="row g-4">
+    <div class="col-md-4">
+        <div class="card shadow-sm">
+            <div class="card-header bg-dark text-white fw-bold">Add Promo Code</div>
+            <div class="card-body">
+                <form method="POST" action="manage_promos.php">
+                    <div class="mb-2">
+                        <label class="form-label">Code</label>
+                        <input type="text" name="code" class="form-control text-uppercase"
+                               maxlength="30" value="<?= e(strtoupper($_POST['code'] ?? '')) ?>"
+                               placeholder="e.g. SUMMER10"
+                               oninput="this.value=this.value.toUpperCase()" required>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Type</label>
+                        <select name="type" class="form-select" required>
+                            <option value="">— select —</option>
+                            <option value="percent" <?= (($_POST['type'] ?? '') === 'percent') ? 'selected' : '' ?>>Percent (%)</option>
+                            <option value="flat"    <?= (($_POST['type'] ?? '') === 'flat')    ? 'selected' : '' ?>>Flat ($)</option>
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Value</label>
+                        <input type="number" name="value" class="form-control"
+                               min="0.01" step="0.01"
+                               value="<?= e($_POST['value'] ?? '') ?>" required
+                               placeholder="e.g. 10 for 10% or $10">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Min. Order Amount ($)</label>
+                        <input type="number" name="min_order" class="form-control"
+                               min="0" step="0.01"
+                               value="<?= e($_POST['min_order'] ?? '0') ?>">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Usage Limit (blank = unlimited)</label>
+                        <input type="number" name="usage_limit" class="form-control"
+                               min="1" step="1"
+                               value="<?= e($_POST['usage_limit'] ?? '') ?>"
+                               placeholder="leave blank for unlimited">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Expiry Date (blank = no expiry)</label>
+                        <input type="date" name="expires_at" class="form-control"
+                               value="<?= e($_POST['expires_at'] ?? '') ?>">
+                    </div>
+                    <button type="submit" name="add_promo" class="btn btn-primary w-100">Add Promo</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-8">
+        <div class="card shadow-sm">
+            <div class="card-header bg-secondary text-white fw-bold">All Promo Codes</div>
+            <div class="card-body p-0">
+                <?php if (empty($promos)): ?>
+                <p class="p-3 mb-0 text-muted">No promo codes yet.</p>
+                <?php else: ?>
+                <table class="table table-striped table-sm mb-0 align-middle">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Code</th>
+                            <th>Type</th>
+                            <th>Value</th>
+                            <th>Min Order</th>
+                            <th>Used / Limit</th>
+                            <th>Expires</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($promos as $p):
+                        $today   = date('Y-m-d');
+                        $expired = $p['ExpiresAt'] && $p['ExpiresAt'] < $today;
+                        $maxed   = $p['UsageLimit'] !== null && (int)$p['TimesUsed'] >= (int)$p['UsageLimit'];
+                    ?>
+                    <tr class="<?= (!$p['Active'] || $expired || $maxed) ? 'table-secondary text-muted' : '' ?>">
+                        <td class="fw-bold font-monospace"><?= e($p['Code']) ?></td>
+                        <td><?= e($p['Type']) ?></td>
+                        <td>
+                            <?php if ($p['Type'] === 'percent'): ?>
+                            <?= number_format((float)$p['Value'], 0) ?>%
+                            <?php else: ?>
+                            $<?= number_format((float)$p['Value'], 2) ?>
+                            <?php endif; ?>
+                        </td>
+                        <td>$<?= number_format((float)$p['MinOrderAmount'], 2) ?></td>
+                        <td>
+                            <?= (int)$p['TimesUsed'] ?> /
+                            <?= $p['UsageLimit'] !== null ? (int)$p['UsageLimit'] : '&#8734;' ?>
+                            <?php if ($maxed): ?>
+                            <span class="badge bg-danger ms-1">maxed</span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <?php if ($p['ExpiresAt']): ?>
+                            <?= e($p['ExpiresAt']) ?>
+                            <?php if ($expired): ?>
+                            <span class="badge bg-danger ms-1">expired</span>
+                            <?php endif; ?>
+                            <?php else: ?>
+                            <span class="text-muted">none</span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <?php if ($p['Active']): ?>
+                            <span class="badge bg-success">Active</span>
+                            <?php else: ?>
+                            <span class="badge bg-secondary">Inactive</span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <a href="manage_promos.php?toggle=<?= (int)$p['Promo_id'] ?>"
+                               class="btn btn-sm btn-outline-<?= $p['Active'] ? 'warning' : 'success' ?>">
+                                <?= $p['Active'] ? 'Deactivate' : 'Activate' ?>
+                            </a>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <?php endif; ?>
+            </div>
+        </div>
     </div>
 </div>
 
