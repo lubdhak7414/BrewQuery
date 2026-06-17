@@ -24,6 +24,18 @@ Edit `config.php` (host/user/pass), then:
 php -S localhost:8080
 ```
 
+## Docker
+
+```bash
+docker compose up --build
+```
+
+App runs at http://localhost:8080. Database is seeded automatically on first start. Demo credentials are the same as above.
+
+```bash
+docker compose down -v
+```
+
 ## Test accounts
 
 | Username | Password | Role |
